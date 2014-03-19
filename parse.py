@@ -1,94 +1,80 @@
-class ParseFailed(Exception): pass
-class FatalParseErr(Exception): pass
+class ParseException(Exception):
+    def __init__(self,stream):
+        self.stream = stream
+
+    def __str__(self):
+        return self.__class__.__name__ + '\n' + ''.join(
+            '%s at %s (%s,%s)\n' % (
+                parser,
+                index,
+                self.stream.lineno_at(index),
+                self.stream.colno_at(index))
+            for parser,index in self.stream.trace if parser.name is not None
+        )
+
+class ParseFailed(ParseException): pass
+class FatalParseErr(ParseException): pass
 
 class StringStream(object):
     def __init__(self,string,index=0):
         self.string = string
         self.index = index
+        self.trace = []
+
+    def line_around(self,index):
+        b = self.string.rfind('\n',0,index)
+        if b == -1: b = 0
+        e = self.string.find('\n',index)
+        if e == -1: e = len(self.string)
+        return self.string[b:e]
+
+    def lineno_at(self,index):
+        return self.string.count('\n',0,index)
+
+    def colno_at(self,index):
+        b = self.string.rfind('\n',0,index)
+        if b == -1: b = 0
+        return index - b
 
 class Parser(object):
-    '''
-    By default, Parser class delegates the parsing to another parser,
-    self.parser
-    
-    For more sophisticated state based behavior, you may wish to
-    subclass Parser and override __call__ and __init__ (as is done by the
-    utility subclasses of Parser below)
-    
-    Note that the parser function doesn't have to be set at time of creation.
-    
-    This could be used as a forward declaration mechanism.
-    '''
-    def __init__(self,parser=None):
+    name = None
+    def __init__(self,parser=None,name=None):
         self.parser = parser
+        if name is not None: self.name = name
     
     def __call__(self,stream):
-        return self.parser(stream)
+        stream.trace.append((self,stream.index))
+        ret = self.parser(stream)
+        stream.trace.pop()
+        return ret
     
     def __add__(self,other):
-        '''
-        Concatenate two parsers
-        '''
         a = self.parsers  if isinstance(self ,ChainParser) else (self,)
         b = other.parsers if isinstance(other,ChainParser) else (other,)
         return ChainParser(a+b)
     
     def __or__(self,other):
-        '''
-        Alternate one or other
-        '''
         a = self .parsers if isinstance(self ,TryParser) else (self,)
         b = other.parsers if isinstance(other,TryParser) else (other,)
         return TryParser(a+b)
     
     def __mul__(self,n):
-        '''
-        Repeat self exactly n times
-        '''
-        a = self.parsers if isinstance(self,ChainParser) else (self,)
-        return ChainParser(a * n)
+        return ExactlyNTimesParser(self,n)
     
     def __pow__(self,n):
-        '''
-        Repeat self at least n times
-        '''
         return AtLeastNTimesParser(self,n)
     
     def __truediv__(self,n):
-        '''
-        Repeat self at most n times
-        '''
         return AtMostNTimesParser(self,n)
     
-    def __div__(self,n):
-        return self.__truediv__(n)
-    
     def __mod__(self,action):
-        '''
-        Apply an action -- modify return value of parser
-        '''
         return ActionParser(self,action)
     
     def __pos__(self):
-        '''
-        Marks parser as critical
-        This means if ParseFailed is raised,
-        it is caught and instead a FatalParseErr is thrown.
-        '''
         return FatalParser(self)
-    
-    def __invert__(self):
-        '''
-        ~self
-        Returns None on match.
-        
-        Decided against using this as ReturnNoneParser,
-        as ~self kind of looks like "don't match self"
-        
-        Instead import ReturnNoneParser as Drop for a more
-        conevenient way to use it
-        '''
-        # return ReturnNoneParser(self)
+
+    def __str__(self):
+        return self.name
     
 class RegexParser(Parser):
     def __init__(self,regex):
@@ -127,6 +113,19 @@ class TryParser(Parser):
             try:                return parser(stream)
             except ParseFailed: stream.index = save
         raise ParseFailed(stream)
+
+class ExactlyNTimesParser(Parser):
+    def __init__(self,parser,n):
+        self.parser = parser
+        self.n = n
+
+    def __call__(self,stream):
+        result = []
+        for _ in range(self.n):
+            m = self.parser(stream)
+            if m is not None:
+                result.append(m)
+        return result
 
 class AtLeastNTimesParser(Parser):
     def __init__(self,parser,n):
@@ -200,14 +199,3 @@ class SeparatorParser(Parser):
         try:                self.separator(stream)
         except ParseFailed: pass
         return self.parser(stream)
-
-class FlattenParser(Parser):
-    def __init__(self,parser):
-        self.parser = parser
-    
-    def __call__(self,stream):
-        result = []
-        for xs in self.parser(stream):
-            result.extend(xs)
-        return result
-

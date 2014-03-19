@@ -15,7 +15,8 @@ from parse import (
     StringStream,
     RegexParser,
     SeparatorParser,
-    ReturnNoneParser as Drop
+    ReturnNoneParser as Drop,
+    ParseException
 )
 
 space = RegexParser(r'\s+')
@@ -25,7 +26,7 @@ variables = dict()
 
 number = Token(r'\d+\.?\d+') % float
 name   = Token(r'\w+')
-var    = name                % (lambda x : variables[x])
+var    = name                % (lambda x : variables[x] if x in variables else 0)
 plus   = Token(r'\+')
 minus  = Token(r'\-')
 dstar  = Token(r'\*\*')
@@ -36,40 +37,40 @@ cpar   = Token(r'\)')
 eq     = Token(r'\=')
 prin   = Token(r'print')
 
-exp    = Parser()
+exp    = Parser(name='expr')
 par    = (Drop(opar) + exp + Drop(cpar)) % (lambda xs : xs[0])
 prim   = par | number | var
 
 
 power          = Parser()
-power.parser   = ( (prim + Drop(dstar) + power) % (lambda xs : xs[0] ** xs[1])
+power.parser   = ( (prim + Drop(dstar) + +power) % (lambda xs : xs[0] ** xs[1])
                  | prim
                  )
 
-unary          = Parser()
-unary.parser   = ( (Drop(plus)  + unary) % (lambda xs : +xs[0])
-                 | (Drop(minus) + unary) % (lambda xs : -xs[0])
+unary          = Parser(name='unary')
+unary.parser   = ( (Drop(plus)  + +unary) % (lambda xs : +xs[0])
+                 | (Drop(minus) + +unary) % (lambda xs : -xs[0])
                  | power
                  )
 
-fact           = Parser()
-fact.parser    = ( (unary + Drop(star)  + fact) % (lambda xs : xs[0] * xs[1])
-                 | (unary + Drop(slash) + fact) % (lambda xs : xs[0] / xs[1])
+fact           = Parser(name='fact')
+fact.parser    = ( (unary + Drop(star)  + +fact) % (lambda xs : xs[0] * xs[1])
+                 | (unary + Drop(slash) + +fact) % (lambda xs : xs[0] / xs[1])
                  | unary
                  )
 
-sum_           = Parser()
-sum_.parser    = ( (fact  + Drop(plus)  + sum_) % (lambda xs : xs[0] + xs[1])
-                 | (fact  + Drop(minus) + sum_) % (lambda xs : xs[0] - xs[1])
+sum_           = Parser(name='sum')
+sum_.parser    = ( (fact  + Drop(plus)  + +sum_) % (lambda xs : xs[0] + xs[1])
+                 | (fact  + Drop(minus) + +sum_) % (lambda xs : xs[0] - xs[1])
                  | fact
                  )
 
-assign         = Parser()
+assign         = Parser(name='assign')
 assign.parser  = ( (name + Drop(eq) + exp) % (lambda xs : variables.__setitem__(xs[0],xs[1]) or xs[1])
                  | sum_
                  )
 
-print_         = Parser()
+print_         = Parser(name='print')
 print_.parser  = ( (Drop(prin) + exp) % (lambda xs : print(xs[0]))
                  | assign
                  )
@@ -77,13 +78,10 @@ print_.parser  = ( (Drop(prin) + exp) % (lambda xs : print(xs[0]))
 exp.parser = print_
 
 calc = exp ** 1
-
-calc(StringStream('''
-x = y = 33
-z = x ** y
-print x * y
-print x + y
-print z - x - y
-print z / z
-'''))
+try:
+    calc(StringStream('''
+    1+
+    '''))
+except ParseException as e:
+    print(e)
 
