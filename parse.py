@@ -58,6 +58,9 @@ class Parser(object):
         b = other.parsers if isinstance(other,TryParser) else (other,)
         return TryParser(a+b)
     
+    def __and__(self,other):
+        return DropFirstParser(self,other)
+    
     def __mul__(self,n):
         return ExactlyNTimesParser(self,n)
     
@@ -199,3 +202,12 @@ class SeparatorParser(Parser):
         try:                self.separator(stream)
         except ParseFailed: pass
         return self.parser(stream)
+
+class DropFirstParser(Parser):
+    def __init__(self,first,second):
+        self.first_parser = first
+        self.second_parser = second
+    
+    def __call__(self,stream):
+        self.first_parser(stream)
+        return self.second_parser(stream)

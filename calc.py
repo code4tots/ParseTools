@@ -71,7 +71,7 @@ assign.parser  = ( (name + Drop(eq) + exp) % (lambda xs : variables.__setitem__(
                  )
 
 print_         = Parser(name='print')
-print_.parser  = ( (Drop(prin) + exp) % (lambda xs : print(xs[0]))
+print_.parser  = ( (prin & exp) % (lambda x : print(x[0]))
                  | assign
                  )
 
@@ -80,7 +80,7 @@ exp.parser = print_
 calc = exp ** 1
 try:
     calc(StringStream('''
-    1+
+    1+2
     '''))
 except ParseException as e:
     print(e)
