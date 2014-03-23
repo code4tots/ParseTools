@@ -1,87 +1,25 @@
-'''
-Simple calculator to test out my parse.py
+from parse import Parser, SingletonParser, RegexParser
 
-I realize that the associativity of multiplicative and additive expressions
-is wrong ... but it's kinda annoying to do it the other way ...
+whitespace_parser = RegexParser(r'\s+')
 
-Hopefully soon I'll try to figure out some way to elegantly handle left 
-recursion ...
-'''
+class TokenParser(Parser):
+    '''
+    Tokens are regexes that are optionally preceded by whitespace
+    '''
+    def __init__(self,regex):
+        self.regex_parser = RegexParser(regex)
+    
+    def _parse(self,stream):
+        try:
+            whitespace_parser.parse(stream)
+        except ParseFailed:
+            pass
+        
+        return self.regex_parser.parse(stream)
 
-from __future__ import print_function
-
-from parse import (
-    Parser,
-    StringStream,
-    RegexParser,
-    SeparatorParser,
-    ReturnNoneParser as Drop,
-    ParseException
-)
-
-space = RegexParser(r'\s+')
-Token = lambda r : SeparatorParser(RegexParser(r),space)
-
-variables = dict()
-
-number = Token(r'\d+\.?\d+') % float
-name   = Token(r'\w+')
-var    = name                % (lambda x : variables[x] if x in variables else 0)
-plus   = Token(r'\+')
-minus  = Token(r'\-')
-dstar  = Token(r'\*\*')
-star   = Token(r'\*')
-slash  = Token(r'\/')
-opar   = Token(r'\(')
-cpar   = Token(r'\)')
-eq     = Token(r'\=')
-prin   = Token(r'print')
-
-exp    = Parser(name='expr')
-par    = (Drop(opar) + exp + Drop(cpar)) % (lambda xs : xs[0])
-prim   = par | number | var
+@SingletonParser
+def integer_parser(stream):
+    pass
 
 
-power          = Parser()
-power.parser   = ( (prim + Drop(dstar) + +power) % (lambda xs : xs[0] ** xs[1])
-                 | prim
-                 )
-
-unary          = Parser(name='unary')
-unary.parser   = ( (Drop(plus)  + +unary) % (lambda xs : +xs[0])
-                 | (Drop(minus) + +unary) % (lambda xs : -xs[0])
-                 | power
-                 )
-
-fact           = Parser(name='fact')
-fact.parser    = ( (unary + Drop(star)  + +fact) % (lambda xs : xs[0] * xs[1])
-                 | (unary + Drop(slash) + +fact) % (lambda xs : xs[0] / xs[1])
-                 | unary
-                 )
-
-sum_           = Parser(name='sum')
-sum_.parser    = ( (fact  + Drop(plus)  + +sum_) % (lambda xs : xs[0] + xs[1])
-                 | (fact  + Drop(minus) + +sum_) % (lambda xs : xs[0] - xs[1])
-                 | fact
-                 )
-
-assign         = Parser(name='assign')
-assign.parser  = ( (name + Drop(eq) + exp) % (lambda xs : variables.__setitem__(xs[0],xs[1]) or xs[1])
-                 | sum_
-                 )
-
-print_         = Parser(name='print')
-print_.parser  = ( (Drop(prin) + exp) % (lambda xs : print(xs[0]))
-                 | assign
-                 )
-
-exp.parser = print_
-
-calc = exp ** 1
-try:
-    calc(StringStream('''
-    1+
-    '''))
-except ParseException as e:
-    print(e)
 
