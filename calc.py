@@ -1,25 +1,90 @@
-from parse import Parser, SingletonParser, RegexParser
+from __future__ import print_function
 
-whitespace_parser = RegexParser(r'\s+')
+from parse import (
+    Stream, 
+    Parser, 
+    RegexParser as RP, 
+    OptionalParser as Optional,
+    ParseFailed
+)
 
-class TokenParser(Parser):
-    '''
-    Tokens are regexes that are optionally preceded by whitespace
-    '''
-    def __init__(self,regex):
-        self.regex_parser = RegexParser(regex)
+whitespace = RP(r'\s+')
+
+Token = lambda regex : Optional(whitespace) + RP(regex)
+
+env = dict()
+
+integer = Token(r'\d+') <= int
+name    = Token(r'\w+')
+var     = name          <= (lambda x : env[x])
+opar    = Token(r'\(')
+cpar    = Token(r'\)')
+plus    = Token(r'\+')
+dash    = Token(r'\-')
+star    = Token(r'\*')
+dstar   = Token(r'\*\*')
+slash   = Token(r'\/')
+eq      = Token(r'\=')
+pr      = Token(r'print')
+end     = Token(r'$')
+
+expr    = Parser(None)
+
+prim    = ( integer
+          | name
+          | opar + expr - cpar
+          )
+
+expo         = Parser(None)
+expo.parser  = ( (prim & dstar + expo <= (lambda a, b : a ** b))
+                 | prim
+                 )
+
+unary        = Parser(None)
+unary.parser = ( (plus + unary <= (lambda a : +a))
+               | (dash + unary <= (lambda a : -a))
+               | expo
+               )
+
+fact         = Parser(None)
+fact.parser  = unary << ( (star  + unary,  (lambda a, b : a * b))
+                        , (slash + unary,  (lambda a, b : a / b))
+                        )
+
+sum_         = Parser(None)
+sum_.parser  = fact << ( (plus + fact, (lambda a, b : a + b))
+                       , (dash + fact, (lambda a, b : a - b))
+                       )
+
+assign        = Parser(None)
+assign.parser = ( (name - eq & assign <= (lambda name, value: (env.__setitem__(name,value),value)[-1]))
+                | sum_
+                )
+
+print_        = Parser(None)
+print_.parser = ( (pr + expr <= (lambda value: print(value)))
+                | assign
+                )
+
+expr.parser = print_
+
+exprs        = Parser(None)
+exprs.parser = ( expr + exprs
+               | end
+               )
+
+try:
+    p = exprs.parse(Stream('''
+    print x = 2 ** 3 * (2 + 45) - 5
+    '''))
+
+except ParseFailed as e:
+    print(e.index)
+    print(e.stream.stream[e.index])
+    print(e.callstack)
+    raise
     
-    def _parse(self,stream):
-        try:
-            whitespace_parser.parse(stream)
-        except ParseFailed:
-            pass
-        
-        return self.regex_parser.parse(stream)
-
-@SingletonParser
-def integer_parser(stream):
-    pass
-
-
+else:
+    print(p)
+    print(type(p))
 
