@@ -1,195 +1,203 @@
 class ParseException(Exception):
     def __init__(self,stream):
+        self.callstack = list(stream.callstack)
+        self.index = stream.index
         self.stream = stream
 
-    def __str__(self):
-        return self.__class__.__name__ + '\n' + ''.join(
-            '%s at %s (%s,%s)\n' % (
-                parser,
-                index,
-                self.stream.lineno_at(index),
-                self.stream.colno_at(index))
-            for parser,index in self.stream.trace if parser.name is not None
-        )
+class ParseFatal(ParseException):
+    pass
 
-class ParseFailed(ParseException): pass
-class FatalParseErr(ParseException): pass
+class CorruptCallStack(ParseFatal):
+    pass
 
-class StringStream(object):
-    def __init__(self,string,index=0):
-        self.string = string
+class ParseFailed(ParseException):
+    pass
+
+class LeftRecursion(ParseFailed):
+    pass
+
+class Stream(object):
+    def __init__(self,stream,index=0):
+        self.stream = stream
         self.index = index
-        self.trace = []
+        self.callstack = []
+        self.callers = set()
+        self.memo_value = dict()
+        self.memo_index = dict()
 
-    def line_around(self,index):
-        b = self.string.rfind('\n',0,index)
-        if b == -1: b = 0
-        e = self.string.find('\n',index)
-        if e == -1: e = len(self.string)
-        return self.string[b:e]
-
-    def lineno_at(self,index):
-        return self.string.count('\n',0,index)
-
-    def colno_at(self,index):
-        b = self.string.rfind('\n',0,index)
-        if b == -1: b = 0
-        return index - b
-
-class Parser(object):
-    name = None
-    def __init__(self,parser=None,name=None):
+class StreamContextManager(object):
+    def __init__(self,parser,stream):
         self.parser = parser
-        if name is not None: self.name = name
+        self.stream = stream
+        self.index = stream.index
+        self.context = id(parser) * len(stream.stream) + stream.index
     
-    def __call__(self,stream):
-        stream.trace.append((self,stream.index))
-        ret = self.parser(stream)
-        stream.trace.pop()
-        return ret
+    def __enter__(self):
+        if self.context in self.stream.callers:
+            raise LeftRecursion(self.stream)
+        
+        self.stream.callers.add(self)
+        self.stream.callstack.append(self)
+        
+        return self.context
     
-    def __add__(self,other):
-        a = self.parsers  if isinstance(self ,ChainParser) else (self,)
-        b = other.parsers if isinstance(other,ChainParser) else (other,)
-        return ChainParser(a+b)
+    def __exit__(self,type_,value,traceback):
+        if len(self.stream.callstack) == 0 or self.stream.callstack.pop() is not self:
+            raise CorruptCallStack(self.stream)
+        
+        self.stream.callers.remove(self)
+        
+        if isinstance(value,ParseFailed):
+            self.stream.memo_value[self.context] = None
     
-    def __or__(self,other):
-        a = self .parsers if isinstance(self ,TryParser) else (self,)
-        b = other.parsers if isinstance(other,TryParser) else (other,)
-        return TryParser(a+b)
+    def __repr__(self):
+        return self.parser.__class__.__name__ + ' ' + str(self.index)
+            
+class Parser(object):
+    def __init__(self,delegate_parser):
+        self.parser = delegate_parser
     
+    def _parse(self,stream):
+        return self.parser.parse(stream)
+    
+    def parse(self,stream):
+        with StreamContextManager(self,stream) as context:
+            if context not in stream.memo_value:
+                stream.memo_value[context] = self._parse(stream)
+                stream.memo_index[context] = stream.index
+            
+            if stream.memo_value[context] is None:
+                raise ParseFailed(stream)
+            
+            stream.index = stream.memo_index[context]
+            return stream.memo_value[context]
+    
+    def __and__(self,other):
+        a = self .parsers if isinstance(self ,ConcatenationParser) else [self ]
+        b = other.parsers if isinstance(other,ConcatenationParser) else [other]
+        return ConcatenationParser(a + b)
+    
+<<<<<<< HEAD
     def __and__(self,other):
         return DropFirstParser(self,other)
     
     def __mul__(self,n):
         return ExactlyNTimesParser(self,n)
+=======
+    def __or__(self,other):
+        a = self .parsers if isinstance(self ,AlternationParser) else [self ]
+        b = other.parsers if isinstance(other,AlternationParser) else [other]
+        return AlternationParser(a + b)
+>>>>>>> cleanup
     
-    def __pow__(self,n):
-        return AtLeastNTimesParser(self,n)
+    def __add__(self,other):
+        return PrefixedParser(self,other)
     
-    def __truediv__(self,n):
-        return AtMostNTimesParser(self,n)
+    def __sub__(self,other):
+        return SuffixedParser(self,other)
     
-    def __mod__(self,action):
+    def __le__(self,action):
         return ActionParser(self,action)
     
-    def __pos__(self):
-        return FatalParser(self)
+    def __lshift__(self,suffixes):
+        return ReduceParser(self,suffixes)
 
-    def __str__(self):
-        return self.name
-    
 class RegexParser(Parser):
     def __init__(self,regex):
         import re
+        self.original_regex = regex
         self.regex = re.compile(regex)
     
-    def __call__(self,stream):
-        m = self.regex.match(stream.string,stream.index)
+    def _parse(self,stream):
+        match = self.regex.match(stream.stream,stream.index)
         
-        if m is None:
-            raise ParseFailed(stream)
-        
-        stream.index = m.end()
-        
-        return m.group()
+        if match is not None:
+            stream.index = match.end()
+            return match.group()
+    
+    def __repr__(self):
+        return 'RegexParser(\'%s\')'%self.original_regex
 
-class ChainParser(Parser):
+class ConcatenationParser(Parser):
     def __init__(self,parsers):
         self.parsers = parsers
     
-    def __call__(self,stream):
-        result = []
-        for p in self.parsers:
-            m = p(stream)
-            if m is not None:
-                result.append(m)
-        return result
-
-class TryParser(Parser):
-    def __init__(self,parsers):
-        self.parsers = parsers
-    
-    def __call__(self,stream):
-        save = stream.index
+    def _parse(self,stream):
+        results = []
         for parser in self.parsers:
-            try:                return parser(stream)
-            except ParseFailed: stream.index = save
+            result = parser.parse(stream)
+            if result is not None:
+                results.append(result)
+        return results
+    
+    def __le__(self,action):
+        return ActionParser(self, lambda xs : action(*xs))
+
+class AlternationParser(Parser):
+    def __init__(self,parsers):
+        self.parsers = parsers
+    
+    def _parse(self,stream):
+        match_begin = stream.index
+        for parser in self.parsers:
+            try:                return parser.parse(stream)
+            except ParseFailed: stream.index = match_begin
         raise ParseFailed(stream)
 
-class ExactlyNTimesParser(Parser):
-    def __init__(self,parser,n):
-        self.parser = parser
-        self.n = n
-
-    def __call__(self,stream):
-        result = []
-        for _ in range(self.n):
-            m = self.parser(stream)
-            if m is not None:
-                result.append(m)
-        return result
-
-class AtLeastNTimesParser(Parser):
-    def __init__(self,parser,n):
-        self.parser = parser
-        self.n = n
+class PrefixedParser(Parser):
+    def __init__(self,prefix,body):
+        self.prefix = prefix
+        self.body = body
     
-    def __call__(self,stream):
-        result = []
-        begin = stream.index
-        try:
-            while True:
-                save = stream.index
-                m = self.parser(stream)
-                if m is not None:
-                    result.append(m)
-        except ParseFailed:
-            stream.index = save
-        
-        if len(result) < self.n:
-            stream.index = begin
-            raise ParseFailed(stream)
-        
-        return result
+    def _parse(self,stream):
+        self.prefix.parse(stream)
+        return self.body.parse(stream)
 
-class AtMostNTimesParser(Parser):
-    def __init__(self,parser,n):
-        self.parser = parser
-        self.n = n
+class SuffixedParser(Parser):
+    def __init__(self,body,suffix):
+        self.body = body
+        self.suffix = suffix
     
-    def __call__(self,stream):
-        result = []
-        try:
-            for _ in range(self.n):
-                save = stream.index
-                m = self.parser(stream)
-                if m is not None:
-                    result.append(m)
-        except ParseFailed:
-            stream.index = save
-        return result
+    def _parse(self,stream):
+        body = self.body.parse(stream)
+        self.suffix.parse(stream)
+        return body
 
 class ActionParser(Parser):
     def __init__(self,parser,action):
         self.parser = parser
         self.action = action
     
-    def __call__(self,stream):
-        return self.action(self.parser(stream))
+    def _parse(self,stream):
+        return self.action(self.parser.parse(stream))
 
-class FatalParser(Parser):
+class ReduceParser(Parser):
+    def __init__(self,base,suffixes):
+        self.base = base
+        self.suffixes = suffixes
+    
+    def _parse(self,stream):
+        result = self.base.parse(stream)
+        while True:
+            next_match_start = stream.index
+            
+            for parser, action in self.suffixes:
+                try:
+                    result = action(result,parser.parse(stream))
+                    break
+                except ParseFailed:
+                    next_match_start = stream.index
+                    
+            if next_match_start == stream.index:
+                break
+        
+        return result
+        
+class OptionalParser(Parser):
     def __init__(self,parser):
         self.parser = parser
     
-    def __call__(self,stream):
-        try:                self.parser(stream)
-        except ParseFailed: raise FatalParseErr(stream)
-
-class ReturnNoneParser(Parser):
-    def __init__(self,parser):
-        self.parser = parser
-    
+<<<<<<< HEAD
     def __call__(self,stream):
         self.parser(stream)
 
@@ -211,3 +219,10 @@ class DropFirstParser(Parser):
     def __call__(self,stream):
         self.first_parser(stream)
         return self.second_parser(stream)
+=======
+    def _parse(self,stream):
+        try:
+            return self.parser.parse(stream)
+        except ParseFailed:
+            return False
+>>>>>>> cleanup

@@ -1,87 +1,102 @@
-'''
-Simple calculator to test out my parse.py
-
-I realize that the associativity of multiplicative and additive expressions
-is wrong ... but it's kinda annoying to do it the other way ...
-
-Hopefully soon I'll try to figure out some way to elegantly handle left 
-recursion ...
-'''
-
 from __future__ import print_function
 
 from parse import (
-    Parser,
-    StringStream,
-    RegexParser,
-    SeparatorParser,
-    ReturnNoneParser as Drop,
-    ParseException
+    Stream, 
+    Parser, 
+    RegexParser as RP, 
+    OptionalParser as Optional,
+    ParseFailed
 )
 
-space = RegexParser(r'\s+')
-Token = lambda r : SeparatorParser(RegexParser(r),space)
+whitespace = RP(r'\s+')
 
-variables = dict()
+Token = lambda regex : Optional(whitespace) + RP(regex)
 
-number = Token(r'\d+\.?\d+') % float
-name   = Token(r'\w+')
-var    = name                % (lambda x : variables[x] if x in variables else 0)
-plus   = Token(r'\+')
-minus  = Token(r'\-')
-dstar  = Token(r'\*\*')
-star   = Token(r'\*')
-slash  = Token(r'\/')
-opar   = Token(r'\(')
-cpar   = Token(r'\)')
-eq     = Token(r'\=')
-prin   = Token(r'print')
+env = dict()
 
-exp    = Parser(name='expr')
-par    = (Drop(opar) + exp + Drop(cpar)) % (lambda xs : xs[0])
-prim   = par | number | var
+integer = Token(r'\d+') <= int
+name    = Token(r'\w+')
+var     = name          <= (lambda x : env[x])
+opar    = Token(r'\(')
+cpar    = Token(r'\)')
+plus    = Token(r'\+')
+dash    = Token(r'\-')
+star    = Token(r'\*')
+dstar   = Token(r'\*\*')
+slash   = Token(r'\/')
+eq      = Token(r'\=')
+pr      = Token(r'print')
+end     = Token(r'$')
 
+expr    = Parser(None)
 
-power          = Parser()
-power.parser   = ( (prim + Drop(dstar) + +power) % (lambda xs : xs[0] ** xs[1])
+prim    = ( integer
+          | name
+          | opar + expr - cpar
+          )
+
+expo         = Parser(None)
+expo.parser  = ( (prim & dstar + expo <= (lambda a, b : a ** b))
                  | prim
                  )
 
-unary          = Parser(name='unary')
-unary.parser   = ( (Drop(plus)  + +unary) % (lambda xs : +xs[0])
-                 | (Drop(minus) + +unary) % (lambda xs : -xs[0])
-                 | power
-                 )
+unary        = Parser(None)
+unary.parser = ( (plus + unary <= (lambda a : +a))
+               | (dash + unary <= (lambda a : -a))
+               | expo
+               )
 
-fact           = Parser(name='fact')
-fact.parser    = ( (unary + Drop(star)  + +fact) % (lambda xs : xs[0] * xs[1])
-                 | (unary + Drop(slash) + +fact) % (lambda xs : xs[0] / xs[1])
-                 | unary
-                 )
+fact         = Parser(None)
+fact.parser  = unary << ( (star  + unary,  (lambda a, b : a * b))
+                        , (slash + unary,  (lambda a, b : a / b))
+                        )
 
-sum_           = Parser(name='sum')
-sum_.parser    = ( (fact  + Drop(plus)  + +sum_) % (lambda xs : xs[0] + xs[1])
-                 | (fact  + Drop(minus) + +sum_) % (lambda xs : xs[0] - xs[1])
-                 | fact
-                 )
+sum_         = Parser(None)
+sum_.parser  = fact << ( (plus + fact, (lambda a, b : a + b))
+                       , (dash + fact, (lambda a, b : a - b))
+                       )
 
-assign         = Parser(name='assign')
-assign.parser  = ( (name + Drop(eq) + exp) % (lambda xs : variables.__setitem__(xs[0],xs[1]) or xs[1])
-                 | sum_
-                 )
+assign        = Parser(None)
+assign.parser = ( (name - eq & assign <= (lambda name, value: (env.__setitem__(name,value),value)[-1]))
+                | sum_
+                )
 
+<<<<<<< HEAD
 print_         = Parser(name='print')
 print_.parser  = ( (prin & exp) % (lambda x : print(x[0]))
                  | assign
                  )
+=======
+print_        = Parser(None)
+print_.parser = ( (pr + expr <= (lambda value: print(value)))
+                | assign
+                )
+>>>>>>> cleanup
 
-exp.parser = print_
+expr.parser = print_
 
-calc = exp ** 1
+exprs        = Parser(None)
+exprs.parser = ( expr + exprs
+               | end
+               )
+
 try:
+<<<<<<< HEAD
     calc(StringStream('''
     1+2
+=======
+    p = exprs.parse(Stream('''
+    print x = 2 ** 3 * (2 + 45) - 5
+>>>>>>> cleanup
     '''))
-except ParseException as e:
-    print(e)
+
+except ParseFailed as e:
+    print(e.index)
+    print(e.stream.stream[e.index])
+    print(e.callstack)
+    raise
+    
+else:
+    print(p)
+    print(type(p))
 
