@@ -112,6 +112,7 @@ equal = Tok(r'\=')
 kw_print = Tok(r'print')
 
 exprs = Parser()
+exprl = Parser()
 expr = Parser()
 prim = Parser()
 expo = Parser()
@@ -152,12 +153,12 @@ prin.parser = (
 
 expr.parser = prin
 
-exprs.parser = (
-    (expr & exprs <= (lambda a,b: (a,b))) | 
-    (end <= (lambda x : None))
+exprl.parser = (
+    (expr & exprl <= (lambda a,b: (a,b))) | 
+    (end          <= (lambda x  : None ))
 )
 
-exprs = exprs <= Exprs
+exprs.parser = exprl <= Exprs
 
 r = exprs('''
 a = 4

@@ -81,9 +81,6 @@ class Parser(object):
         b = other.parsers if isinstance(other,Or) else [other]
         return Or(a+b)
     
-    def __xor__(self,other):
-        return Chain(self,other)
-    
     def __add__(self,other):
         return Second(self,other)
     
@@ -110,7 +107,7 @@ class Regex(Parser):
         return match.group()
 
 class And(Parser):
-    'Fixed number -- if count unknown, Chain should be preferred'
+    'Fixed number -- if count unknown, should prefer a chaining mechanism'
     def __init__(self,parsers):
         self.parsers = parsers
     
@@ -131,16 +128,6 @@ class Or(Parser):
             try:                return parser(stream)
             except ParseFailed: stream.index = index
         raise ParseFailed(stream)
-
-class Chain(Parser):
-    'Kinda like And, but results in LinkedList'
-    def __init__(self,a,b):
-        self.a = a
-        self.b = b
-    
-    def _parse(self,stream):
-        from data import LinkedList
-        return LinkedList(self.a(stream),self.b(stream))
 
 class First(Parser):
     'keeps just the result of first parser'
