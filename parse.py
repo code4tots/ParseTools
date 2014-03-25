@@ -93,6 +93,12 @@ class Parser(object):
     
     def __lshift__(self,suffixes):
         return ReduceParser(self,suffixes)
+    
+    def __pos__(self):
+        return MandatoryParser(self)
+    
+    def __neg__(self):
+        return OptionalParser(self)
 
 class RegexParser(Parser):
     def __init__(self,regex):
@@ -194,3 +200,13 @@ class OptionalParser(Parser):
             return self.parser.parse(stream)
         except ParseFailed:
             return False
+
+class MandatoryParser(Parser):
+    def __init__(self,parser):
+        self.parser = parser
+    
+    def _parse(self,stream):
+        try:
+            return self.parser.parse(stream)
+        except ParseFailed:
+            raise ParseFatal(stream)

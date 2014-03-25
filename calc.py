@@ -3,14 +3,13 @@ from __future__ import print_function
 from parse import (
     Stream, 
     Parser, 
-    RegexParser as RP, 
-    OptionalParser as Optional,
+    RegexParser,
     ParseFailed
 )
 
-whitespace = RP(r'\s+')
+whitespace = RegexParser(r'\s+')
 
-Token = lambda regex : Optional(whitespace) + RP(regex)
+Token = lambda regex : -whitespace + RegexParser(regex)
 
 env = dict()
 
@@ -26,12 +25,13 @@ dstar   = Token(r'\*\*')
 slash   = Token(r'\/')
 eq      = Token(r'\=')
 pr      = Token(r'print')
+sc      = Token(r';')
 end     = Token(r'$')
 
 expr    = Parser(None)
 
 prim    = ( integer
-          | name
+          | var
           | opar + expr - cpar
           )
 
@@ -62,7 +62,7 @@ assign.parser = ( (name - eq & assign <= (lambda name, value: (env.__setitem__(n
                 )
 
 print_        = Parser(None)
-print_.parser = ( (pr + expr <= (lambda value: print(value)))
+print_.parser = ( (pr + expr <= (lambda value: (print(value),value)[-1]))
                 | assign
                 )
 
@@ -75,7 +75,12 @@ exprs.parser = ( expr + exprs
 
 try:
     p = exprs.parse(Stream('''
-    print x = 2 ** 3 * (2 + 45) - 5
+    print 1
+    print 2
+    x = 2 ** 3 * (2 + 45) - 5
+    print 12
+    print x + 2
+    print x
     '''))
 
 except ParseFailed as e:
@@ -83,8 +88,5 @@ except ParseFailed as e:
     print(e.stream.stream[e.index])
     print(e.callstack)
     raise
-    
-else:
-    print(p)
-    print(type(p))
+
 
