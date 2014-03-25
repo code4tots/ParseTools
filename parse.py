@@ -87,7 +87,7 @@ class Parser(object):
     def __sub__(self,other):
         return First(self,other)
     
-    def __le__(self,action):
+    def __lt__(self,action):
         return Action(self,action)
     
     def __lshift__(self,alternatives):
@@ -114,7 +114,7 @@ class And(Parser):
     def _parse(self,stream):
         return [parser(stream) for parser in self.parsers]
     
-    def __le__(self,action):
+    def __lt__(self,action):
         return Action(self,lambda xs : action(*xs))
 
 class Or(Parser):
@@ -157,7 +157,8 @@ class Action(Parser):
         self.action = action
     
     def _parse(self,stream):
-        return self.action(self.parser(stream))
+        x = self.parser(stream)
+        return self.action(x)
 
 class Reduce(Parser):
     'to aid in left recursive grammars'

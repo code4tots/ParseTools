@@ -95,11 +95,11 @@ end = Regex(r'$')
 
 Tok = lambda regex : ws + Regex(regex)
 
-end = Tok(r'$') <= (lambda _: None)
-flt = Tok(r'[\+\-]?(\d+\.)|(\d*\.\d+)') <= Float
-int_ = Tok(r'[\+\-]?\d+') <= Int
-nam = Tok(r'\w+') <= Name
-var = nam
+end   = Tok(r'$')                         < (lambda _: None)
+flt   = Tok(r'[\+\-]?(\d+\.)|(\d*\.\d+)') < Float
+int_  = Tok(r'[\+\-]?\d+')                < Int
+nam   = Tok(r'\w+')                       < Name
+var   = nam
 plus  = Tok(r'\+')
 dash  = Tok(r'\-')
 star  = Tok(r'\*')
@@ -113,23 +113,23 @@ kw_print = Tok(r'print')
 
 exprs = Parser()
 exprl = Parser()
-expr = Parser()
-prim = Parser()
-expo = Parser()
-sign = Parser()
-fact = Parser()
-summ = Parser()
-asgn = Parser()
-prin = Parser()
+expr  = Parser()
+prim  = Parser()
+expo  = Parser()
+sign  = Parser()
+fact  = Parser()
+summ  = Parser()
+asgn  = Parser()
+prin  = Parser()
 
 prim.parser = flt | int_ | var | opar + expr - cpar
 expo.parser = (
-    (prim - dstar & expo <= Pow) |
+    (prim - dstar & expo < Pow) |
     prim
 )
 sign.parser = (
-    (plus + sign <= Pos) |
-    (dash + sign <= Neg) |
+    (plus + sign < Pos) |
+    (dash + sign < Neg) |
     expo
 )
 fact.parser = sign << (
@@ -142,23 +142,23 @@ summ.parser = fact << (
     (dash + fact, Sub)
 )
 asgn.parser = (
-    (nam - equal & asgn <= Asgn) |
+    (nam - equal & asgn < Asgn) |
     summ
 )
 
 prin.parser = (
-    (kw_print + expr <= Prin) |
+    (kw_print + expr < Prin) |
     asgn
 )
 
 expr.parser = prin
 
 exprl.parser = (
-    (expr & exprl <= (lambda a,b: (a,b))) | 
-    (end          <= (lambda x  : None ))
+    (expr & exprl < (lambda a,b: (a,b))) | 
+    (end          < (lambda x  : None ))
 )
 
-exprs.parser = exprl <= Exprs
+exprs.parser = exprl < Exprs
 
 r = exprs('''
 a = 4

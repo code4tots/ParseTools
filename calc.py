@@ -7,10 +7,10 @@ ws = Regex(r'\s*')
 
 Tok = lambda regex : ws + Regex(regex)
 
-end = Tok(r'$') <= (lambda _: None)
-num = Tok(r'[\+\-]?(\d+\.?)|(\d*\.\d+)') <= float
+end = Tok(r'$') < (lambda _: None)
+num = Tok(r'[\+\-]?(\d+\.?)|(\d*\.\d+)') < float
 nam = Tok(r'\w+')
-var = nam <= (lambda x : env[x])
+var = nam < (lambda x : env[x])
 plus  = Tok(r'\+')
 dash  = Tok(r'\-')
 star  = Tok(r'\*')
@@ -34,12 +34,12 @@ prin = Parser()
 
 prim.parser = num | var | opar + expr - cpar
 expo.parser = (
-    (prim - dstar & expo <= (lambda a, b: a ** b)) |
+    (prim - dstar & expo < (lambda a, b: a ** b)) |
     prim
 )
 sign.parser = (
-    (plus + sign <= (lambda x : +x)) |
-    (dash + sign <= (lambda x : -x)) |
+    (plus + sign < (lambda x : +x)) |
+    (dash + sign < (lambda x : -x)) |
     expo
 )
 fact.parser = sign << (
@@ -52,12 +52,12 @@ summ.parser = fact << (
     (dash + fact, (lambda a,b: a - b))
 )
 asgn.parser = (
-    (nam - equal & asgn <= (lambda n,v : (env.__setitem__(n,v),v)[-1])) |
+    (nam - equal & asgn < (lambda n,v : (env.__setitem__(n,v),v)[-1])) |
     summ
 )
 
 prin.parser = (
-    (rr + expr <= (lambda x : (print(x),x)[-1])) |
+    (rr + expr < (lambda x : (print(x),x)[-1])) |
     asgn
 )
 
