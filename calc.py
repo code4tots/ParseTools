@@ -1,92 +1,73 @@
 from __future__ import print_function
-
-from parse import (
-    Stream, 
-    Parser, 
-    RegexParser,
-    ParseFailed
-)
-
-whitespace = RegexParser(r'\s+')
-
-Token = lambda regex : -whitespace + RegexParser(regex)
+from parse import Stream, Parser, Regex
 
 env = dict()
 
-integer = Token(r'\d+') <= int
-name    = Token(r'\w+')
-var     = name          <= (lambda x : env[x])
-opar    = Token(r'\(')
-cpar    = Token(r'\)')
-plus    = Token(r'\+')
-dash    = Token(r'\-')
-star    = Token(r'\*')
-dstar   = Token(r'\*\*')
-slash   = Token(r'\/')
-eq      = Token(r'\=')
-pr      = Token(r'print')
-sc      = Token(r';')
-end     = Token(r'$')
+ws = Regex(r'\s*')
 
-expr    = Parser(None)
+Tok = lambda regex : ws + Regex(regex)
 
-prim    = ( integer
-          | var
-          | opar + expr - cpar
-          )
+end = Tok(r'$') <= (lambda _: None)
+num = Tok(r'[\+\-]?(\d+\.?)|(\d*\.\d+)') <= float
+nam = Tok(r'\w+')
+var = nam <= (lambda x : env[x])
+plus  = Tok(r'\+')
+dash  = Tok(r'\-')
+star  = Tok(r'\*')
+slash = Tok(r'\/')
+mod   = Tok(r'\%')
+dstar = Tok(r'\*\*')
+opar  = Tok(r'\(')
+cpar  = Tok(r'\)')
+equal = Tok(r'\=')
+rr    = Tok(r'\>\>')
 
-expo         = Parser(None)
-expo.parser  = ( (prim & dstar + expo <= (lambda a, b : a ** b))
-                 | prim
-                 )
+exprs = Parser()
+expr = Parser()
+prim = Parser()
+expo = Parser()
+sign = Parser()
+fact = Parser()
+summ = Parser()
+asgn = Parser()
+prin = Parser()
 
-unary        = Parser(None)
-unary.parser = ( (plus + unary <= (lambda a : +a))
-               | (dash + unary <= (lambda a : -a))
-               | expo
-               )
+prim.parser = num | var | opar + expr - cpar
+expo.parser = (
+    (prim - dstar & expo <= (lambda a, b: a ** b)) |
+    prim
+)
+sign.parser = (
+    (plus + sign <= (lambda x : +x)) |
+    (dash + sign <= (lambda x : -x)) |
+    expo
+)
+fact.parser = sign << (
+    (star  + sign, (lambda a, b : a * b)),
+    (slash + sign, (lambda a, b : a / b)),
+    (mod   + sign, (lambda a, b : a % b))
+)
+summ.parser = fact << (
+    (plus + fact, (lambda a,b: a + b)),
+    (dash + fact, (lambda a,b: a - b))
+)
+asgn.parser = (
+    (nam - equal & asgn <= (lambda n,v : (env.__setitem__(n,v),v)[-1])) |
+    summ
+)
 
-fact         = Parser(None)
-fact.parser  = unary << ( (star  + unary,  (lambda a, b : a * b))
-                        , (slash + unary,  (lambda a, b : a / b))
-                        )
+prin.parser = (
+    (rr + expr <= (lambda x : (print(x),x)[-1])) |
+    asgn
+)
 
-sum_         = Parser(None)
-sum_.parser  = fact << ( (plus + fact, (lambda a, b : a + b))
-                       , (dash + fact, (lambda a, b : a - b))
-                       )
+expr.parser = prin
 
-assign        = Parser(None)
-assign.parser = ( (name - eq & assign <= (lambda name, value: (env.__setitem__(name,value),value)[-1]))
-                | sum_
-                )
+exprs.parser = expr + exprs | expr
 
-print_        = Parser(None)
-print_.parser = ( (pr + expr <= (lambda value: (print(value),value)[-1]))
-                | assign
-                )
-
-expr.parser = print_
-
-exprs        = Parser(None)
-exprs.parser = ( expr + exprs
-               | end
-               )
-
-try:
-    p = exprs.parse(Stream('''
-    print 1
-    print 2
-    x = 2 ** 3 * (2 + 45) - 5
-    print 12
-    print x + 2
-    print x
-    '''))
-
-except ParseFailed as e:
-    print(e.index)
-    print(e.stream.stream[e.index])
-    print(e.callstack)
-    raise
-
-
+exprs('''
+>> a = 4
+b = 5
+a + b
+>> a + b
+''')

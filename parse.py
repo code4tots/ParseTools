@@ -1,212 +1,193 @@
 class ParseException(Exception):
-    def __init__(self,stream):
-        self.callstack = list(stream.callstack)
-        self.index = stream.index
+    'base exception'
+    def __init__(self,stream=None):
+        self.set_stream(stream)
+    
+    def set_stream(self,stream):
         self.stream = stream
+        self.index = stream.index
+        self.callstack = list(stream.callstack)
 
 class ParseFatal(ParseException):
-    pass
+    'unrecoverable -- should be caught by user'
 
-class CorruptCallStack(ParseFatal):
-    pass
+class LeftRecursion(ParseFatal):
+    'left recursion indicates something wrong with grammar'
 
 class ParseFailed(ParseException):
-    pass
+    'thrown around a lot when pattern does not match'
 
-class LeftRecursion(ParseFailed):
-    pass
+class ActionFailed(ParseFailed):
+    'when user action indicates parse should fail'
 
 class Stream(object):
-    def __init__(self,stream,index=0):
-        self.stream = stream
-        self.index = index
+    'Should be subclassed for extra behavior (e.g. indent stack)'
+    def __init__(self,string):
+        self.string = string
+        self.index = 0
         self.callstack = []
         self.callers = set()
         self.memo_value = dict()
         self.memo_index = dict()
 
-class StreamContextManager(object):
-    def __init__(self,parser,stream):
-        self.parser = parser
-        self.stream = stream
-        self.index = stream.index
-        self.context = id(parser) * len(stream.stream) + stream.index
-    
-    def __enter__(self):
-        if self.context in self.stream.callers:
-            raise LeftRecursion(self.stream)
-        
-        self.stream.callers.add(self)
-        self.stream.callstack.append(self)
-        
-        return self.context
-    
-    def __exit__(self,type_,value,traceback):
-        if len(self.stream.callstack) == 0 or self.stream.callstack.pop() is not self:
-            raise CorruptCallStack(self.stream)
-        
-        self.stream.callers.remove(self)
-        
-        if isinstance(value,ParseFailed):
-            self.stream.memo_value[self.context] = None
-    
-    def __repr__(self):
-        return self.parser.__class__.__name__ + ' ' + str(self.index)
-            
+fail_indicator = object()
+
 class Parser(object):
-    def __init__(self,delegate_parser):
-        self.parser = delegate_parser
+    'subclasses should override __init__ and _parse'
+    def __init__(self,parser=None):
+        self.parser = parser
     
     def _parse(self,stream):
-        return self.parser.parse(stream)
+        return self.parser(stream)
     
-    def parse(self,stream):
-        with StreamContextManager(self,stream) as context:
-            if context not in stream.memo_value:
-                stream.memo_value[context] = self._parse(stream)
-                stream.memo_index[context] = stream.index
+    def __call__(self,stream):
+        if isinstance(stream,str):
+            stream = Stream(stream)
+        
+        h = id(self) * len(stream.string) + stream.index
+        
+        if h in stream.callers:
+            raise LeftRecursion(stream)
+        
+        if h not in stream.memo_value:
+            stream.callstack.append((self,stream.index))
+            stream.callers.add(h)
             
-            if stream.memo_value[context] is None:
-                raise ParseFailed(stream)
-            
-            stream.index = stream.memo_index[context]
-            return stream.memo_value[context]
+            try:
+                stream.memo_value[h] = self._parse(stream)
+                stream.memo_index[h] = stream.index
+                
+            except ParseFailed:
+                stream.memo_value[h] = fail_indicator
+                raise
+                
+            finally:
+                stream.callstack.pop()
+                stream.callers.remove(h)
+        
+        if stream.memo_value[h] is fail_indicator:
+            raise ParseFailed(stream)
+        
+        stream.index = stream.memo_index[h]
+        return stream.memo_value[h]
     
     def __and__(self,other):
-        a = self .parsers if isinstance(self ,ConcatenationParser) else [self ]
-        b = other.parsers if isinstance(other,ConcatenationParser) else [other]
-        return ConcatenationParser(a + b)
+        a = self .parsers if isinstance(self ,And) else [self ]
+        b = other.parsers if isinstance(other,And) else [other]
+        return And(a+b)
     
     def __or__(self,other):
-        a = self .parsers if isinstance(self ,AlternationParser) else [self ]
-        b = other.parsers if isinstance(other,AlternationParser) else [other]
-        return AlternationParser(a + b)
+        a = self .parsers if isinstance(self ,Or) else [self ]
+        b = other.parsers if isinstance(other,Or) else [other]
+        return Or(a+b)
+    
+    def __xor__(self,other):
+        return Chain(self,other)
     
     def __add__(self,other):
-        return PrefixedParser(self,other)
+        return Second(self,other)
     
     def __sub__(self,other):
-        return SuffixedParser(self,other)
+        return First(self,other)
     
     def __le__(self,action):
-        return ActionParser(self,action)
+        return Action(self,action)
     
-    def __lshift__(self,suffixes):
-        return ReduceParser(self,suffixes)
-    
-    def __pos__(self):
-        return MandatoryParser(self)
-    
-    def __neg__(self):
-        return OptionalParser(self)
+    def __lshift__(self,alternatives):
+        return Reduce(self,alternatives)
 
-class RegexParser(Parser):
+class Regex(Parser):
+    'essentially all terminals'
     def __init__(self,regex):
         import re
-        self.original_regex = regex
         self.regex = re.compile(regex)
     
     def _parse(self,stream):
-        match = self.regex.match(stream.stream,stream.index)
-        
-        if match is not None:
-            stream.index = match.end()
-            return match.group()
-    
-    def __repr__(self):
-        return 'RegexParser(\'%s\')'%self.original_regex
+        match = self.regex.match(stream.string,stream.index)
+        if match is None:
+            raise ParseFailed(stream)
+        stream.index = match.end()
+        return match.group()
 
-class ConcatenationParser(Parser):
+class And(Parser):
+    'Fixed number -- if count unknown, Chain should be preferred'
     def __init__(self,parsers):
         self.parsers = parsers
     
     def _parse(self,stream):
-        results = []
-        for parser in self.parsers:
-            result = parser.parse(stream)
-            if result is not None:
-                results.append(result)
-        return results
+        return [parser(stream) for parser in self.parsers]
     
     def __le__(self,action):
-        return ActionParser(self, lambda xs : action(*xs))
+        return Action(self,lambda xs : action(*xs))
 
-class AlternationParser(Parser):
+class Or(Parser):
+    'one of alternatives'
     def __init__(self,parsers):
         self.parsers = parsers
     
     def _parse(self,stream):
-        match_begin = stream.index
+        index = stream.index
         for parser in self.parsers:
-            try:                return parser.parse(stream)
-            except ParseFailed: stream.index = match_begin
+            try:                return parser(stream)
+            except ParseFailed: stream.index = index
         raise ParseFailed(stream)
 
-class PrefixedParser(Parser):
-    def __init__(self,prefix,body):
-        self.prefix = prefix
-        self.body = body
+class Chain(Parser):
+    'Kinda like And, but results in LinkedList'
+    def __init__(self,a,b):
+        self.a = a
+        self.b = b
     
     def _parse(self,stream):
-        self.prefix.parse(stream)
-        return self.body.parse(stream)
+        from data import LinkedList
+        return LinkedList(self.a(stream),self.b(stream))
 
-class SuffixedParser(Parser):
-    def __init__(self,body,suffix):
-        self.body = body
-        self.suffix = suffix
+class First(Parser):
+    'keeps just the result of first parser'
+    def __init__(self,a,b):
+        self.a = a
+        self.b = b
     
     def _parse(self,stream):
-        body = self.body.parse(stream)
-        self.suffix.parse(stream)
-        return body
+        x = self.a(stream)
+        self.b(stream)
+        return x
 
-class ActionParser(Parser):
+class Second(Parser):
+    'keeps just the result of the second parser'
+    def __init__(self,a,b):
+        self.a = a
+        self.b = b
+    
+    def _parse(self,stream):
+        self.a(stream)
+        return self.b(stream)
+
+class Action(Parser):
+    'changes return value'
     def __init__(self,parser,action):
         self.parser = parser
         self.action = action
     
     def _parse(self,stream):
-        return self.action(self.parser.parse(stream))
+        return self.action(self.parser(stream))
 
-class ReduceParser(Parser):
-    def __init__(self,base,suffixes):
-        self.base = base
-        self.suffixes = suffixes
+class Reduce(Parser):
+    'to aid in left recursive grammars'
+    def __init__(self,parser,alternatives):
+        self.parser = parser
+        self.alternatives = alternatives
     
     def _parse(self,stream):
-        result = self.base.parse(stream)
+        x = self.parser(stream)
         while True:
-            next_match_start = stream.index
+            match_begin = stream.index
             
-            for parser, action in self.suffixes:
-                try:
-                    result = action(result,parser.parse(stream))
-                    break
-                except ParseFailed:
-                    next_match_start = stream.index
-                    
-            if next_match_start == stream.index:
+            for parser, action in self.alternatives:
+                try:                x = action(x,parser(stream))
+                except ParseFailed: stream.index = match_begin
+                else:               break
+                
+            if match_begin == stream.index:
                 break
-        
-        return result
-        
-class OptionalParser(Parser):
-    def __init__(self,parser):
-        self.parser = parser
-    
-    def _parse(self,stream):
-        try:
-            return self.parser.parse(stream)
-        except ParseFailed:
-            return False
-
-class MandatoryParser(Parser):
-    def __init__(self,parser):
-        self.parser = parser
-    
-    def _parse(self,stream):
-        try:
-            return self.parser.parse(stream)
-        except ParseFailed:
-            raise ParseFatal(stream)
+        return x
