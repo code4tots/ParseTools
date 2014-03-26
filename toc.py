@@ -20,7 +20,7 @@ class Word(AST):
 class Typename(AST):
     ''
 
-class TypeIdentifier(Typename):
+class TypeIdentifier(Typename,Word):
     def __init__(self,string):
         self.string = string
 

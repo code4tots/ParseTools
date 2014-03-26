@@ -1,100 +1,128 @@
+'''
+parse.py
+========
+
+My original goal in desigining parse.py was to make a memoized top down
+parser that is flexible enough to handle all sorts of usecases easily.
+
+However, I soon realized things that required state (like indent sensitive
+parsing, parenthesis nested sensitive whitespace, typename parsing, etc.)
+became quite a hassle to handle...
+
+So I just made a Parser framework that just handled all of *my* usecases
+out of the box. This of course makes the parser less epic and flexible...
+but hopefully it will be useful for a lot of things...
+'''
+
 class ParseException(Exception):
     'base exception'
-    def __init__(self,stream=None):
-        self.set_stream(stream)
-    
-    def set_stream(self,stream):
-        self.stream = stream
-        self.index = stream.index
-        self.callstack = list(stream.callstack)
 
-class ParseFatal(ParseException):
-    'unrecoverable -- should be caught by user'
+class FatalParse(ParseException):
+    'encountered something so bad that we should end parsing'
 
-class LeftRecursion(ParseFatal):
-    'left recursion indicates something wrong with grammar'
+class LeftRecursion(FatalParse):
+    'thrown if there is a left recursion encountered in the grammar'
+
+class MismatchedClosure(FatalParse):
+    'extra close parenthesis/bracket/brace was encountered'
 
 class ParseFailed(ParseException):
-    'thrown around a lot when pattern does not match'
-
-class ActionFailed(ParseFailed):
-    'when user action indicates parse should fail'
+    'default exception thrown when unable to parse'
 
 class Stream(object):
-    'Should be subclassed for extra behavior (e.g. indent stack)'
+    '''
+    Stream
+    ======
+    
+    '''
     def __init__(self,string):
+        'string to parse'
         self.string = string
+        
+        '''
+        state variables
+        index -> current index in string
+        istack -> indentation stack
+        depth -> parenthesis/bracket/brace depth
+        '''
         self.index = 0
-        self.callstack = []
+        self.istack = ('',None)
+        self.depth = 0
+        
+        'for memoizing results and new states'
+        self.memo = dict()
+        
+        '''
+        call information
+        cstack -> call stack
+        callers -> stuff that are trying to parse this stream
+        '''
+        self.cstack = []
         self.callers = set()
-        self.memo_value = dict()
-        self.memo_index = dict()
+    
+    @property
+    def state(self):
+        return (self.index,self,istack,self.pdepth)
+    
+    @state.setter
+    def state(self,new_state):
+        self.index, self.istack, self.pdepth = new_state
 
-fail_indicator = object()
+parse_failed_sentinel = object()
 
 class Parser(object):
-    'subclasses should override __init__ and _parse'
-    def __init__(self,parser=None):
+    '''
+    Parser
+    ======
+    
+    '''
+    def __init__(self,parser):
         self.parser = parser
     
     def _parse(self,stream):
-        return self.parser(stream)
+        self.parser(stream)
     
     def __call__(self,stream):
-        if isinstance(stream,str):
-            stream = Stream(stream)
+        initial_state = stream.state
         
-        h = id(self) * len(stream.string) + stream.index
+        memo_id = (self,initial_state)
         
-        if h in stream.callers:
+        if memo_id in stream.callers:
             raise LeftRecursion(stream)
         
-        if h not in stream.memo_value:
-            stream.callstack.append((self,stream.index))
-            stream.callers.add(h)
+        if memo_id not in stream.memo:
+            '"push" into call stack'
+            stream.cstack.append(memo_id)
+            stream.callers.add(memo_id)
             
             try:
-                stream.memo_value[h] = self._parse(stream)
-                stream.memo_index[h] = stream.index
+                return_value = self._parse(stream)
                 
             except ParseFailed:
-                stream.memo_value[h] = fail_indicator
+                stream.memo[memo_id] = None, parse_failed_sentinel
+                stream.state = initial_state
                 raise
                 
+            else:
+                stream.memo[memo_id] = stream.state, return_value
+                
             finally:
-                stream.callstack.pop()
-                stream.callers.remove(h)
+                '"pop" out of call stack'
+                stream.cstack.pop()
+                stream.callers.remove(memo_id)
         
-        if stream.memo_value[h] is fail_indicator:
+        new_state, return_value = stream.memo[memo_identifier]
+        
+        if return_value is parse_failed_sentinel:
             raise ParseFailed(stream)
-        
-        stream.index = stream.memo_index[h]
-        return stream.memo_value[h]
-    
-    def __and__(self,other):
-        a = self .parsers if isinstance(self ,And) else [self ]
-        b = other.parsers if isinstance(other,And) else [other]
-        return And(a+b)
-    
-    def __or__(self,other):
-        a = self .parsers if isinstance(self ,Or) else [self ]
-        b = other.parsers if isinstance(other,Or) else [other]
-        return Or(a+b)
-    
-    def __add__(self,other):
-        return Second(self,other)
-    
-    def __sub__(self,other):
-        return First(self,other)
-    
-    def __lt__(self,action):
-        return Action(self,action)
-    
-    def __lshift__(self,alternatives):
-        return Reduce(self,alternatives)
+            
+        stream.state = new_state
+        return return_value
+
+class And(Parser):
+    pass
 
 class Regex(Parser):
-    'essentially all terminals'
     def __init__(self,regex):
         import re
         self.regex = re.compile(regex)
@@ -102,80 +130,36 @@ class Regex(Parser):
     def _parse(self,stream):
         match = self.regex.match(stream.string,stream.index)
         if match is None:
-            raise ParseFailed(stream)
+            raise ParseFailed()
         stream.index = match.end()
         return match.group()
 
-class And(Parser):
-    'Fixed number -- if count unknown, should prefer a chaining mechanism'
-    def __init__(self,parsers):
-        self.parsers = parsers
-    
-    def _parse(self,stream):
-        return [parser(stream) for parser in self.parsers]
-    
-    def __lt__(self,action):
-        return Action(self,lambda xs : action(*xs))
+without_newline = Regex(r'[ \t]+')
+with_newline    = Regex(r'[ \t\n]+')
 
-class Or(Parser):
-    'one of alternatives'
-    def __init__(self,parsers):
-        self.parsers = parsers
-    
-    def _parse(self,stream):
-        index = stream.index
-        for parser in self.parsers:
-            try:                return parser(stream)
-            except ParseFailed: stream.index = index
-        raise ParseFailed(stream)
+@Parser
+def space(stream):
+    return (with_newline if stream.pdepth else without_newline)(stream)
 
-class First(Parser):
-    'keeps just the result of first parser'
-    def __init__(self,a,b):
-        self.a = a
-        self.b = b
-    
-    def _parse(self,stream):
-        x = self.a(stream)
-        self.b(stream)
-        return x
-
-class Second(Parser):
-    'keeps just the result of the second parser'
-    def __init__(self,a,b):
-        self.a = a
-        self.b = b
-    
-    def _parse(self,stream):
-        self.a(stream)
-        return self.b(stream)
-
-class Action(Parser):
-    'changes return value'
-    def __init__(self,parser,action):
+class Open(Parser):
+    'Open parenthetical structure'
+    def __init__(self,parser):
         self.parser = parser
-        self.action = action
     
     def _parse(self,stream):
-        x = self.parser(stream)
-        return self.action(x)
+        stream.depth += 1
+        return self.parser(stream)
 
-class Reduce(Parser):
-    'to aid in left recursive grammars'
-    def __init__(self,parser,alternatives):
+class Close(Parser):
+    'Close parenthetical structure'
+    def __init__(self,parser):
         self.parser = parser
-        self.alternatives = alternatives
     
     def _parse(self,stream):
-        x = self.parser(stream)
-        while True:
-            match_begin = stream.index
-            
-            for parser, action in self.alternatives:
-                try:                x = action(x,parser(stream))
-                except ParseFailed: stream.index = match_begin
-                else:               break
-                
-            if match_begin == stream.index:
-                break
-        return x
+        stream.depth -= 1
+        if stream.pdepth < 0:
+            raise MismatchedClosure(stream)
+        return self.parser(stream)
+
+
+
