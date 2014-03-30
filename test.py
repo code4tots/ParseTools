@@ -40,7 +40,7 @@ lines        = Parser()
 lines.parser = line & lines | end
 
 p = lines.parse('''
-f = x:f[a b]
+f = token[a]
 ''')
 print(p)
 
